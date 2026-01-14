@@ -27,7 +27,7 @@ struct Node {
 
   /** Gets the since version of the operator. */
   int SinceVersion() const noexcept {
-    return kernel_info_.GetSinceVersion();
+    return kernel_info_.GetOperatorSinceVersion();
   }
 
  private:
