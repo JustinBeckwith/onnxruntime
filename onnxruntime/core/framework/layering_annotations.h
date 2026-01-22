@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/common/inlined_containers.h"
 #include <string>
 #include <vector>
 
@@ -35,16 +36,7 @@ struct LayeringRules {
 /// </summary>
 class LayeringRuleMatcher {
  public:
-  explicit LayeringRuleMatcher(const LayeringRules& rules) {
-    for (size_t i = 0; i < rules.rules.size(); ++i) {
-      const auto& rule = rules.rules[i];
-      if (rule.prefix_match) {
-        AddPrefixRule(rule.annotation, i);
-      } else {
-        AddExactRule(rule.annotation, i);
-      }
-    }
-  }
+  explicit LayeringRuleMatcher(const LayeringRules& rules);
 
   /// <summary>
   /// The method returns the index of the best matching rule for the given annotation
@@ -52,78 +44,45 @@ class LayeringRuleMatcher {
   /// </summary>
   /// <param name="node_annotation">annotation retrieved from protobuf node metadata</param>
   /// <returns></returns>
-  std::optional<size_t> Match(const std::string& node_annotation) const {
-    std::optional<size_t> best_match = std::nullopt;
-
-    // 1. Check Exact Matches
-    auto it = exact_match_rules_.find(node_annotation);
-    if (it != exact_match_rules_.end()) {
-      best_match = it->second;
-    }
-
-    // 2. Check Prefix Matches via Trie
-    const TrieNode* current = &root_;
-
-    // Check for empty prefix rule (matches everything)
-    if (current->rule_index.has_value()) {
-      UpdateBestMatch(best_match, *current->rule_index);
-    }
-
-    for (char c : node_annotation) {
-      if (best_match.has_value() && *best_match == 0) {
-        // Optimization: If we already found index 0, we can't do better.
-        return 0;
-      }
-
-      auto child_it = current->children.find(c);
-      if (child_it == current->children.end()) {
-        break;
-      }
-      current = child_it->second.get();
-      if (current->rule_index.has_value()) {
-        UpdateBestMatch(best_match, *current->rule_index);
-      }
-    }
-
-    return best_match;
-  }
+  std::optional<size_t> Match(const std::string& node_annotation) const;
 
  private:
   struct TrieNode {
-    std::unordered_map<char, std::unique_ptr<TrieNode>> children;
+    InlinedHashMap<char, std::unique_ptr<TrieNode>> children;
     std::optional<size_t> rule_index;
   };
 
   TrieNode root_;
-  std::unordered_map<std::string, size_t> exact_match_rules_;
+  InlinedHashMap<std::string, size_t> exact_match_rules_;
 
   void AddExactRule(const std::string& annotation, size_t index) {
     // Only store the first occurrence (lowest index)
-    if (exact_match_rules_.find(annotation) == exact_match_rules_.end()) {
-      exact_match_rules_[annotation] = index;
-    }
+    exact_match_rules_.insert({annotation, index});
   }
 
   void AddPrefixRule(const std::string& annotation, size_t index) {
     TrieNode* current = &root_;
     for (char c : annotation) {
-      if (current->children.find(c) == current->children.end()) {
-        current->children[c] = std::make_unique<TrieNode>();
+      auto p = current->children.insert({c, nullptr});
+      if (p.second) {
+        p.first->second = std::make_unique<TrieNode>();
       }
-      current = current->children[c].get();
+      current = p.first->second.get();
     }
 
     // Only store if strictly better (lower index) or not set
-    if (!current->rule_index.has_value() || index < *current->rule_index) {
+    // Since we iterate rules 0..N, if a rule index is already set for this node,
+    // it corresponds to a higher priority rule, so we skip overwriting it.
+    if (!current->rule_index) {
       current->rule_index = index;
     }
   }
 
   void UpdateBestMatch(std::optional<size_t>& current_best, size_t candidate) const {
-    if (!current_best.has_value() || candidate < *current_best) {
+    if (!current_best || candidate < *current_best) {
       current_best = candidate;
     }
   }
 };
 
-}
+}  // namespace onnxruntime
