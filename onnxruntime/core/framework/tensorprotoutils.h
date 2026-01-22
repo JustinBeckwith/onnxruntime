@@ -638,7 +638,7 @@ common::Status UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initiali
 common::Status UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initializer,
                                      std::vector<uint8_t>& unpacked_tensor);
 
-constexpr const char* kNodeProtoLayerAnnotation = "layer_annotation";
+constexpr const char* kNodeProtoLayerAnnotation = "layer_ann";
 
 /**
  * This function examines the given node proto and looks into its metadata_props.
