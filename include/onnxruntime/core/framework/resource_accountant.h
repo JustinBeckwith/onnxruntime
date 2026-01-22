@@ -51,6 +51,10 @@ class IResourceAccountant {
     return threshold_;
   }
 
+  void SetThreshold(const ResourceCount& threshold) {
+    threshold_ = threshold;
+  }
+
   void SetStopAssignment() noexcept {
     stop_assignment_ = true;
   }

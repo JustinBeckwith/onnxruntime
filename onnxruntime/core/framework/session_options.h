@@ -81,29 +81,6 @@ struct EpSelectionPolicy {
   void* state{nullptr};  // state for the delegate
 };
 
-/// <summary>
-/// Annotation extracted from kOrtSessionOptionsLayerAssignmentSettings session configuration option.
-/// </summary>
-struct LayerAnnotation {
-  std::string device;
-  std::string annotation;
-  bool prefix_match;
-};
-
-/// <summary>
-/// This struct is a container for layering rules extracted from the kOrtSessionOptionsLayerAssignmentSettings
-/// session configuration option.
-/// </summary>
-struct LayeringRules {
-  std::vector<LayerAnnotation> rules;
-  /// <summary>
-  /// Parses the layering rules from the given configuration string.
-  /// </summary>
-  /// <param name="config_value"></param>
-  /// <returns></returns>
-  static LayeringRules FromConfigString(const std::string& config_value);
-};
-
 /**
  * Configuration information for a session.
  */
