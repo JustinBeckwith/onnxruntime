@@ -12,6 +12,8 @@
 struct OrtEpDevice;
 
 namespace onnxruntime {
+class ExecutionProviders;
+
 /// <summary>
 /// Annotation extracted from kOrtSessionOptionsLayerAssignmentSettings session configuration option.
 /// </summary>
@@ -100,6 +102,15 @@ class EpLayeringMatcher {
   /// <returns>Optional containing the matched EP type, nullopt otherwise.</returns>
   static std::optional<std::string> Match(gsl::span<const OrtEpDevice* const> ep_devices,
                                           const LayerAnnotation& rule);
+
+  /// <summary>
+  /// Matches a collection of ExecutionProviders against the device string specified in the LayerAnnotation.
+  /// Returns the EP Type string of the first provider that matches the rule.
+  /// </summary>
+  /// <param name="providers">The collection of available Execution Providers.</param>
+  /// <param name="rule">The rule containing the device designator.</param>
+  /// <returns>Optional containing the matched EP type, nullopt otherwise.</returns>
+  static std::optional<std::string> Match(const ExecutionProviders& providers, const LayerAnnotation& rule);
 };
 
 }  // namespace onnxruntime

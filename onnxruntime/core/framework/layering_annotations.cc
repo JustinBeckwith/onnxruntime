@@ -7,6 +7,7 @@
 #include "core/framework/layering_annotations.h"
 #include "core/framework/ortmemoryinfo.h"
 #include "core/session/abi_devices.h"
+#include "core/framework/execution_providers.h"
 
 #include <limits>
 
@@ -179,7 +180,7 @@ std::optional<std::string> EpLayeringMatcher::Match(gsl::span<const OrtEpDevice*
           matched = true;
         } else if (check_mem_device_type(OrtDevice::GPU)) {
           matched = true;
-        }  // Heuristic fallback for common GPU EPs if hardware info is missing
+        }  // Heuristic fallback for common GPU EPs if hardware info is missing. Should we also check for TRT here?
         else if (ep_device.ep_name == kCudaExecutionProvider || ep_device.ep_name == kDmlExecutionProvider) {
           matched = true;
         }
@@ -241,7 +242,7 @@ std::optional<std::string> EpLayeringMatcher::Match(gsl::span<const OrtEpDevice*
     }
     // "fpga"
     else if (CaseInsensitiveCompare(target_type_str, "fpga")) {
-      // No OrtHardwareDeviceType_FPGA currently, rely on OrtDevice::FPGA from MemInfo
+      // No OrtHardwareDeviceType_FPGA currently, rely on OrtDevice::FPGA
       if (check_mem_device_type(OrtDevice::FPGA)) {
         matched = true;
       }
@@ -265,6 +266,118 @@ std::optional<std::string> EpLayeringMatcher::Match(gsl::span<const OrtEpDevice*
 
     if (matched) {
       return ep_device.ep_name;
+    }
+  }
+
+  return std::nullopt;
+}
+
+std::optional<std::string> EpLayeringMatcher::Match(const ExecutionProviders& providers, const LayerAnnotation& rule) {
+  const std::string& target_full = rule.device;
+  const auto colon_pos = target_full.find(':');
+  const std::string target_type_str = (colon_pos == std::string::npos) ? target_full : target_full.substr(0, colon_pos);
+  std::string target_specifier;
+  if (colon_pos != std::string::npos) {
+    target_specifier = target_full.substr(colon_pos + 1);
+  }
+
+  for (const auto& ep_shared_ptr : providers) {
+    if (!ep_shared_ptr) {
+      continue;
+    }
+    const IExecutionProvider& ep = *ep_shared_ptr;
+    const std::string& ep_name = ep.Type();
+    const OrtDevice& device = ep.GetDevice();
+
+    bool matched = false;
+
+    // 1. Exact Name / Alias match
+    // "cpu"
+    if (CaseInsensitiveCompare(target_type_str, "cpu")) {
+      if (ep_name == kCpuExecutionProvider) {
+        matched = true;
+      } else if (device.Type() == OrtDevice::CPU) {
+        matched = true;
+      }
+    }  // "gpu"
+    else if (CaseInsensitiveCompare(target_type_str, "gpu")) {
+      // If simple "gpu"
+      if (target_specifier.empty()) {
+        if (device.Type() == OrtDevice::GPU) {
+          matched = true;
+        }  // Heuristics, XXX: Should we also check for TRT here?
+        else if (ep_name == kCudaExecutionProvider || ep_name == kDmlExecutionProvider) {
+          matched = true;
+        }
+      } else {
+        // "gpu:<vendor>" or "gpu:<index>"
+        if (device.Type() == OrtDevice::GPU) {
+          uint32_t index = std::numeric_limits<uint32_t>::max();
+          if (TryParseIndex(target_specifier, index)) {
+            // gpu:<index>
+            if (device.Id() == static_cast<OrtDevice::DeviceId>(index)) {
+              matched = true;
+            }
+          } else {
+            // gpu:<vendor> checking against Vendor ID
+            if (CaseInsensitiveCompare(target_specifier, "nvidia") &&
+                device.Vendor() == OrtDevice::VendorIds::NVIDIA) {
+              matched = true;
+            } else if (CaseInsensitiveCompare(target_specifier, "amd") &&
+                       device.Vendor() == OrtDevice::VendorIds::AMD) {
+              matched = true;
+            } else if (CaseInsensitiveCompare(target_specifier, "intel") &&
+                       device.Vendor() == OrtDevice::VendorIds::INTEL) {
+              matched = true;
+            }
+            // Special shortcuts heuristics: gpu:nvidia -> CUDA
+            else if (CaseInsensitiveCompare(target_specifier, "nvidia") && ep_name == kCudaExecutionProvider) {
+              matched = true;
+            }
+          }
+        }
+      }
+    }
+    // "accelerator" (not cpu)
+    else if (CaseInsensitiveCompare(target_type_str, "accelerator")) {
+      if (ep_name != kCpuExecutionProvider) {
+        if (device.Type() != OrtDevice::CPU) {
+          matched = true;
+        }
+      }
+    }  // "npu"
+    else if (CaseInsensitiveCompare(target_type_str, "npu")) {
+      if (device.Type() == OrtDevice::NPU) {
+        matched = true;
+      } else if (ep_name == kQnnExecutionProvider || ep_name == kVitisAIExecutionProvider) {
+        matched = true;
+      }
+    }
+    // "fpga"
+    else if (CaseInsensitiveCompare(target_type_str, "fpga")) {
+      if (device.Type() == OrtDevice::FPGA) {
+        matched = true;
+      }
+    }
+    // "cuda"
+    else if (CaseInsensitiveCompare(target_type_str, "cuda")) {
+      if (ep_name == kCudaExecutionProvider) {
+        matched = true;
+      }
+    }
+    // "dml"
+    else if (CaseInsensitiveCompare(target_type_str, "dml")) {
+      if (ep_name == kDmlExecutionProvider) {
+        matched = true;
+      }
+    }
+    // Fallback: Exact EP name string match (e.g. "MyCustomEP")
+    else if (ep_name == target_full) {
+      matched = true;
+    }
+
+    if (matched) {
+      return ep_name;
     }
   }
 

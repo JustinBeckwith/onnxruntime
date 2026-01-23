@@ -8,6 +8,7 @@
 #include "core/framework/ortdevice.h"
 #include "core/graph/constants.h"
 #include "gtest/gtest.h"
+#include "core/framework/execution_providers.h"  // For ExecutionProviders
 
 namespace onnxruntime {
 namespace test {
@@ -479,6 +480,100 @@ TEST(EpLayeringMatcherTest, MatchExactEPName) {
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(*result, "MyCustomEP");
   }
+}
+
+namespace {
+
+// Minimal concrete implementation of IExecutionProvider for testing
+class MockExecutionProvider : public IExecutionProvider {
+ public:
+  MockExecutionProvider(const std::string& type, OrtDevice device)
+      : IExecutionProvider(type, device) {}
+
+  std::shared_ptr<KernelRegistry> GetKernelRegistry() const override { return nullptr; }
+};
+
+}  // namespace
+
+TEST(EpLayeringMatcherTest, MatchExecutionProviders_CPU) {
+  LayerAnnotation rule = {"CPU", "Anno1", false};
+  ExecutionProviders providers;
+
+  // Add CPU provider
+  auto cpu_ep = std::make_shared<MockExecutionProvider>(kCpuExecutionProvider, OrtDevice(OrtDevice::CPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCpuExecutionProvider, cpu_ep));
+
+  // Add a GPU provider (should be skipped for CPU rule)
+  auto gpu_ep = std::make_shared<MockExecutionProvider>(kCudaExecutionProvider, OrtDevice(OrtDevice::GPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCudaExecutionProvider, gpu_ep));
+
+  auto result = EpLayeringMatcher::Match(providers, rule);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, kCpuExecutionProvider);
+}
+
+TEST(EpLayeringMatcherTest, MatchExecutionProviders_GPU) {
+  LayerAnnotation rule = {"GPU", "Anno1", false};
+  ExecutionProviders providers;
+
+  // Add CPU provider (should be skipped)
+  auto cpu_ep = std::make_shared<MockExecutionProvider>(kCpuExecutionProvider, OrtDevice(OrtDevice::CPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCpuExecutionProvider, cpu_ep));
+
+  // Add CUDA provider (GPU)
+  auto gpu_ep = std::make_shared<MockExecutionProvider>(kCudaExecutionProvider, OrtDevice(OrtDevice::GPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCudaExecutionProvider, gpu_ep));
+
+  auto result = EpLayeringMatcher::Match(providers, rule);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, kCudaExecutionProvider);
+}
+
+TEST(EpLayeringMatcherTest, MatchExecutionProviders_GPU_Specific) {
+  LayerAnnotation rule = {"gpu:nvidia", "Anno1", false};  // Assumes heuristics or vendor ID logic
+  ExecutionProviders providers;
+
+  // Add CPU provider
+  auto cpu_ep = std::make_shared<MockExecutionProvider>(kCpuExecutionProvider, OrtDevice(OrtDevice::CPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCpuExecutionProvider, cpu_ep));
+
+  // Add CUDA provider (NVIDIA vendor ID)
+  auto gpu_ep = std::make_shared<MockExecutionProvider>(kCudaExecutionProvider,
+                                                        OrtDevice(OrtDevice::GPU, OrtDevice::MemType::DEFAULT, OrtDevice::VendorIds::NVIDIA, 0));
+  ASSERT_STATUS_OK(providers.Add(kCudaExecutionProvider, gpu_ep));
+
+  auto result = EpLayeringMatcher::Match(providers, rule);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, kCudaExecutionProvider);
+}
+
+TEST(EpLayeringMatcherTest, MatchExecutionProviders_NoMatch) {
+  LayerAnnotation rule = {"GPU", "Anno1", false};
+  ExecutionProviders providers;
+
+  // Only CPU provider available
+  auto cpu_ep = std::make_shared<MockExecutionProvider>(kCpuExecutionProvider, OrtDevice(OrtDevice::CPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCpuExecutionProvider, cpu_ep));
+
+  auto result = EpLayeringMatcher::Match(providers, rule);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST(EpLayeringMatcherTest, MatchExecutionProviders_Accelerator) {
+  LayerAnnotation rule = {"accelerator", "Anno1", false};
+  ExecutionProviders providers;
+
+  // Add CPU
+  auto cpu_ep = std::make_shared<MockExecutionProvider>(kCpuExecutionProvider, OrtDevice(OrtDevice::CPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add(kCpuExecutionProvider, cpu_ep));
+
+  // Add custom accelerator
+  auto accel_ep = std::make_shared<MockExecutionProvider>("MyAccel", OrtDevice(OrtDevice::NPU, OrtDevice::MemType::DEFAULT, 0, 0));
+  ASSERT_STATUS_OK(providers.Add("MyAccel", accel_ep));
+
+  auto result = EpLayeringMatcher::Match(providers, rule);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, "MyAccel");
 }
 
 }  // namespace test
