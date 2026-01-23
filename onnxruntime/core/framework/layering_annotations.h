@@ -4,8 +4,10 @@
 #pragma once
 
 #include "core/common/inlined_containers.h"
+#include "gsl/gsl"
 #include <string>
 #include <vector>
+#include <optional>
 
 struct OrtEpDevice;
 
@@ -87,22 +89,17 @@ class LayeringRuleMatcher {
   }
 };
 
-struct EpMatchResult {
-  size_t rule_index;
-  std::string ep_type;
-};
-
 class EpLayeringMatcher {
  public:
   /// <summary>
-  /// Matches a specific OrtEpDevice against the device string specified in the LayeringRule at rule_index.
+  /// Matches a list of available OrtEpDevices against the device string specified in the LayerAnnotation.
+  /// Returns the EP Type string of the first device that matches the rule.
   /// </summary>
-  /// <param name="ep_device">The EP device to check.</param>
-  /// <param name="rules">The collection of rules.</param>
-  /// <param name="rule_index">Index of the rule to validate against.</param>
-  /// <returns>Optional with match details if matched, nullopt otherwise.</returns>
-  static std::optional<EpMatchResult> Match(const OrtEpDevice& ep_device, const LayeringRules& rules,
-                                            size_t rule_index);
+  /// <param name="ep_devices">The list of available EP devices.</param>
+  /// <param name="rule">The rule containing the device designator.</param>
+  /// <returns>Optional containing the matched EP type, nullopt otherwise.</returns>
+  static std::optional<std::string> Match(gsl::span<const OrtEpDevice* const> ep_devices,
+                                          const LayerAnnotation& rule);
 };
 
 }  // namespace onnxruntime

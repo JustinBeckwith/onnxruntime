@@ -4,6 +4,8 @@
 #include "core/framework/ortmemoryinfo.h"
 #include "core/framework/layering_annotations.h"
 #include "core/session/abi_devices.h"
+#include "core/framework/execution_provider.h"  // For kCpuExecutionProvider, kCudaExecutionProvider, etc.
+#include "core/framework/ortdevice.h"
 #include "core/graph/constants.h"
 #include "gtest/gtest.h"
 
@@ -197,233 +199,285 @@ TestEpDevice CreateMemEp(const std::string& name, OrtDevice::DeviceType type, in
 }  // namespace
 
 TEST(EpLayeringMatcherTest, MatchCPU) {
-  LayeringRules rules;
-  rules.rules.push_back({"CPU", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"CPU", "Anno1", false};
 
   // Case 1: EP Name kCpuExecutionProvider
   {
     auto test_ep = CreateEp(kCpuExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->ep_type, kCpuExecutionProvider);
+    EXPECT_EQ(*result, kCpuExecutionProvider);
   }
 
   // Case 2: Hardware Device CPU
   {
     auto test_ep = CreateHwEp("SomeCPU_EP", OrtHardwareDeviceType_CPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "SomeCPU_EP");
   }
 
   // Case 3: Memory Info CPU
   {
     auto test_ep = CreateMemEp("MemCPU_EP", OrtDevice::CPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MemCPU_EP");
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchGPU) {
-  LayeringRules rules;
-  rules.rules.push_back({"GPU", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"GPU", "Anno1", false};
 
   // Case 1: Hardware Device GPU
   {
     auto test_ep = CreateHwEp("MyGPU_EP", OrtHardwareDeviceType_GPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyGPU_EP");
   }
 
   // Case 2: Memory Info GPU
   {
     auto test_ep = CreateMemEp("MemGPU_EP", OrtDevice::GPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MemGPU_EP");
   }
 
   // Case 3: Heuristic kCudaExecutionProvider
   {
     auto test_ep = CreateEp(kCudaExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kCudaExecutionProvider);
   }
 
   // Case 4: Heuristic kDmlExecutionProvider
   {
     auto test_ep = CreateEp(kDmlExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kDmlExecutionProvider);
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchSpecificGPU_VendorString) {
-  LayeringRules rules;
-  rules.rules.push_back({"gpu:nvidia", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"gpu:nvidia", "Anno1", false};
 
   // Case 1: Vendor String Match
   {
     auto test_ep = CreateHwEp("MyNvidia_EP", OrtHardwareDeviceType_GPU, 0, 0, "NVIDIA");
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyNvidia_EP");
   }
 
   // Case 2: Vendor String Mismatch
   {
     auto test_ep = CreateHwEp("MyAMD_EP", OrtHardwareDeviceType_GPU, 0, 0, "AMD");
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     EXPECT_FALSE(result.has_value());
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchSpecificGPU_VendorId) {
-  LayeringRules rules;
-  rules.rules.push_back({"gpu:intel", "Anno1", false});   // Index 0
-  rules.rules.push_back({"gpu:nvidia", "Anno2", false});  // Index 1
-  rules.rules.push_back({"gpu:amd", "Anno3", false});     // Index 2
+  LayerAnnotation rule_intel = {"gpu:intel", "Anno1", false};
+  LayerAnnotation rule_nvidia = {"gpu:nvidia", "Anno2", false};
+  LayerAnnotation rule_amd = {"gpu:amd", "Anno3", false};
 
   // Case 1: Vendor ID Match Intel
   {
     auto test_ep = CreateHwEp("Intel_EP", OrtHardwareDeviceType_GPU, OrtDevice::VendorIds::INTEL);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule_intel);
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->rule_index, 0u);
+    EXPECT_EQ(*result, "Intel_EP");
   }
 
   // Case 2: Vendor ID Match Nvidia
   {
     auto test_ep = CreateHwEp("Nvidia_EP", OrtHardwareDeviceType_GPU, OrtDevice::VendorIds::NVIDIA);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 1);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule_nvidia);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "Nvidia_EP");
   }
 
   // Case 3: Vendor ID Match AMD
   {
     auto test_ep = CreateHwEp("AMD_EP", OrtHardwareDeviceType_GPU, OrtDevice::VendorIds::AMD);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 2);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule_amd);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "AMD_EP");
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchSpecificGPU_Heuristic) {
-  LayeringRules rules;
-  rules.rules.push_back({"gpu:nvidia", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"gpu:nvidia", "Anno1", false};
 
   // Case 1: kCudaExecutionProvider -> nvidia
   {
-    auto test_ep = CreateEp(kCudaExecutionProvider);
-    // Needs HW Type GPU for this specific heuristic path in code?
-    // Looking at code: "else if (target_specifier == "nvidia" && ep_name == kCuda)" lies inside "if (device && type == GPU)".
-    // So heuristic applies ONLY if we have HW info saying it is a GPU.
-
-    // Let's create an EP that claims to be a GPU HW but has generic/empty vendor
+    // Need an EP with GPU HW type but generic vendor info to trigger the heuristic
     auto test_ep_hw = CreateHwEp(kCudaExecutionProvider, OrtHardwareDeviceType_GPU);
+    OrtEpDevice ep_device = test_ep_hw.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
 
-    auto result = EpLayeringMatcher::Match(test_ep_hw.Get(), rules, 0);
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kCudaExecutionProvider);
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchSpecificGPU_Index) {
-  LayeringRules rules;
-  rules.rules.push_back({"gpu:1", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"gpu:1", "Anno1", false};
 
   // Case 1: ID Match
   {
     auto test_ep = CreateHwEp("GPU1", OrtHardwareDeviceType_GPU, 0, 1);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "GPU1");
   }
 
   // Case 2: ID Mismatch
   {
     auto test_ep = CreateHwEp("GPU0", OrtHardwareDeviceType_GPU, 0, 0);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     EXPECT_FALSE(result.has_value());
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchAccelerator) {
-  LayeringRules rules;
-  rules.rules.push_back({"accelerator", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"accelerator", "Anno1", false};
 
   // Case 1: CPU EP should NOT match
   {
     auto test_ep = CreateEp(kCpuExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     EXPECT_FALSE(result.has_value());
   }
 
   // Case 2: Custom EP, No HW/Mem info, considered accelerator
   {
     auto test_ep = CreateEp("MyCustomAccel");
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyCustomAccel");
   }
 
   // Case 3: GPU HW is an accelerator
   {
     auto test_ep = CreateHwEp("MyGPU", OrtHardwareDeviceType_GPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyGPU");
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchNPU) {
-  LayeringRules rules;
-  rules.rules.push_back({"npu", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"npu", "Anno1", false};
 
   // Case 1: Hardware NPU
   {
     auto test_ep = CreateHwEp("MyNPU", OrtHardwareDeviceType_NPU);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyNPU");
   }
 
   // Case 2: QNN Heuristic
   {
     auto test_ep = CreateEp(kQnnExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kQnnExecutionProvider);
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchFPGA) {
-  LayeringRules rules;
-  rules.rules.push_back({"fpga", "Anno1", false});  // Index 0
+  LayerAnnotation rule = {"fpga", "Anno1", false};
 
   // Case 1: MemInfo says FPGA
   {
     auto test_ep = CreateMemEp("MyFPGA", OrtDevice::FPGA);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyFPGA");
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchDirectDesignators) {
-  LayeringRules rules;
-  rules.rules.push_back({"cuda", "A", false});  // 0
-  rules.rules.push_back({"dml", "B", false});   // 1
+  LayerAnnotation rule_cuda = {"cuda", "A", false};
+  LayerAnnotation rule_dml = {"dml", "B", false};
 
   {
     auto test_ep = CreateEp(kCudaExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule_cuda);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kCudaExecutionProvider);
   }
   {
     auto test_ep = CreateEp(kDmlExecutionProvider);
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 1);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule_dml);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kDmlExecutionProvider);
   }
 }
 
 TEST(EpLayeringMatcherTest, MatchExactEPName) {
-  LayeringRules rules;
-  rules.rules.push_back({"MyCustomEP", "Anno1", false});
+  LayerAnnotation rule = {"MyCustomEP", "Anno1", false};
 
   {
     auto test_ep = CreateEp("MyCustomEP");
-    auto result = EpLayeringMatcher::Match(test_ep.Get(), rules, 0);
+    OrtEpDevice ep_device = test_ep.Get();
+    std::vector<const OrtEpDevice*> devices = {&ep_device};
+    auto result = EpLayeringMatcher::Match(devices, rule);
     ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, "MyCustomEP");
   }
 }
 
