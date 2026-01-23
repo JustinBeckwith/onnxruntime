@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+struct OrtEpDevice;
+
 namespace onnxruntime {
 /// <summary>
 /// Annotation extracted from kOrtSessionOptionsLayerAssignmentSettings session configuration option.
@@ -43,7 +45,7 @@ class LayeringRuleMatcher {
   /// if it exists
   /// </summary>
   /// <param name="node_annotation">annotation retrieved from protobuf node metadata</param>
-  /// <returns></returns>
+  /// <returns>index of the matching LayeringRule if it exists</returns>
   std::optional<size_t> Match(const std::string& node_annotation) const;
 
  private:
@@ -83,6 +85,24 @@ class LayeringRuleMatcher {
       current_best = candidate;
     }
   }
+};
+
+struct EpMatchResult {
+  size_t rule_index;
+  std::string ep_type;
+};
+
+class EpLayeringMatcher {
+ public:
+  /// <summary>
+  /// Matches a specific OrtEpDevice against the device string specified in the LayeringRule at rule_index.
+  /// </summary>
+  /// <param name="ep_device">The EP device to check.</param>
+  /// <param name="rules">The collection of rules.</param>
+  /// <param name="rule_index">Index of the rule to validate against.</param>
+  /// <returns>Optional with match details if matched, nullopt otherwise.</returns>
+  static std::optional<EpMatchResult> Match(const OrtEpDevice& ep_device, const LayeringRules& rules,
+                                            size_t rule_index);
 };
 
 }  // namespace onnxruntime
