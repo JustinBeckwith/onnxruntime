@@ -385,15 +385,15 @@ std::optional<std::string> EpLayeringMatcher::Match(const ExecutionProviders& pr
   return std::nullopt;
 }
 
-std::unique_ptr<LayeringIndex> LayeringIndex::Create(const Graph& graph,
-                                                     EpNameToLayeringIndices ep_map,
-                                                     LayeringIndexToEpName rule_map,
-                                                     const LayeringRuleMatcher& matcher) {
+LayeringIndex LayeringIndex::Create(const Graph& graph,
+                                    EpNameToLayeringIndices ep_map,
+                                    LayeringIndexToEpName rule_map,
+                                    const LayeringRuleMatcher& matcher) {
   // 1. Create LayeringIndex instance with pre-computed maps
-  auto index = std::make_unique<LayeringIndex>(std::move(ep_map), std::move(rule_map));
+  LayeringIndex index(std::move(ep_map), std::move(rule_map));
 
   // 2. Traverse the graph and index nodes
-  index->ProcessGraph(graph, matcher, std::nullopt);
+  index.ProcessGraph(graph, matcher, std::nullopt);
 
   return index;
 }
@@ -412,8 +412,8 @@ void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& 
     if (!annotation.empty()) {
       // If it has an annotation try to match it
       matched_rule_idx = matcher.Match(annotation);
-    } 
-    
+    }
+
     // 5. If node has no annotation, inherit from subgraph parent node
     if (!matched_rule_idx && parent_layer_id) {
       matched_rule_idx = parent_layer_id;
@@ -422,11 +422,15 @@ void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& 
     // Record assignment if we have a match
     if (matched_rule_idx) {
       const size_t rule_idx = *matched_rule_idx;
-        
+
       // Only assign if this rule maps to a valid EP in our configuration
       if (layering_index_to_ep_name_.count(rule_idx)) {
         ORT_IGNORE_RETURN_VALUE(current_graph_index.node_to_layering_index_.insert_or_assign(node.Index(), rule_idx));
         ORT_IGNORE_RETURN_VALUE(current_graph_index.layer_to_node_ids_[rule_idx].insert(node.Index()));
+      } else {
+        // reset since no valid EP mapping
+        // so it does not propagate to sub-graphs if any
+        matched_rule_idx = std::nullopt;
       }
     }
 

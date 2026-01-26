@@ -131,10 +131,10 @@ class LayeringIndex {
   /// <param name="ep_map">Pre-populated mapping of EP names to their applicable rule indices.</param>
   /// <param name="rule_map">Pre-populated mapping of rule indices to EP names.</param>
   /// <param name="matcher">Matcher to resolve node annotations to rule indices.</param>
-  static std::unique_ptr<LayeringIndex> Create(const Graph& graph,
-                                               EpNameToLayeringIndices ep_map,
-                                               LayeringIndexToEpName rule_map,
-                                               const LayeringRuleMatcher& matcher);
+  static LayeringIndex Create(const Graph& graph,
+                              EpNameToLayeringIndices ep_map,
+                              LayeringIndexToEpName rule_map,
+                              const LayeringRuleMatcher& matcher);
 
   // Returns the Layering Rule indices mapped to the EP if any
   std::optional<std::reference_wrapper<const InlinedHashSet<size_t>>>
