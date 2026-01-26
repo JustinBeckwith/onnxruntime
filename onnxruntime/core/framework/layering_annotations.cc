@@ -8,6 +8,7 @@
 #include "core/framework/ortmemoryinfo.h"
 #include "core/session/abi_devices.h"
 #include "core/framework/execution_providers.h"
+#include "core/graph/graph.h"
 
 #include <limits>
 
@@ -382,6 +383,61 @@ std::optional<std::string> EpLayeringMatcher::Match(const ExecutionProviders& pr
   }
 
   return std::nullopt;
+}
+
+std::unique_ptr<LayeringIndex> LayeringIndex::Create(const Graph& graph,
+                                                     EpNameToLayeringIndices ep_map,
+                                                     LayeringIndexToEpName rule_map,
+                                                     const LayeringRuleMatcher& matcher) {
+  // 1. Create LayeringIndex instance with pre-computed maps
+  auto index = std::make_unique<LayeringIndex>(std::move(ep_map), std::move(rule_map));
+
+  // 2. Traverse the graph and index nodes
+  index->ProcessGraph(graph, matcher, std::nullopt);
+
+  return index;
+}
+
+// Process to to bottom-up assign layering indices to nodes
+void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& matcher,
+                                 std::optional<size_t> parent_layer_id) {
+  // 3. Create entry for this graph instance
+  GraphLayeringIndex& current_graph_index = graph_index_[&graph];
+
+  for (const auto& node : graph.Nodes()) {
+    std::optional<size_t> matched_rule_idx = std::nullopt;
+
+    // 4. For every node query its annotation
+    const std::string& annotation = node.GetLayeringAnnotation();
+    if (!annotation.empty()) {
+      // If it has an annotation try to match it
+      matched_rule_idx = matcher.Match(annotation);
+    } 
+    
+    // 5. If node has no annotation, inherit from subgraph parent node
+    if (!matched_rule_idx && parent_layer_id) {
+      matched_rule_idx = parent_layer_id;
+    }
+
+    // Record assignment if we have a match
+    if (matched_rule_idx) {
+      const size_t rule_idx = *matched_rule_idx;
+        
+      // Only assign if this rule maps to a valid EP in our configuration
+      if (layering_index_to_ep_name_.count(rule_idx)) {
+        ORT_IGNORE_RETURN_VALUE(current_graph_index.node_to_layering_index_.insert_or_assign(node.Index(), rule_idx));
+        ORT_IGNORE_RETURN_VALUE(current_graph_index.layer_to_node_ids_[rule_idx].insert(node.Index()));
+      }
+    }
+
+    // Recurse for subgraphs
+    if (node.ContainsSubgraph()) {
+      const std::optional<size_t> subgraph_parent_assignment = matched_rule_idx;
+      for (const auto& [attr_name, subgraph] : node.GetAttributeNameToSubgraphMap()) {
+        ProcessGraph(*subgraph, matcher, subgraph_parent_assignment);
+      }
+    }
+  }
 }
 
 }  // namespace onnxruntime
