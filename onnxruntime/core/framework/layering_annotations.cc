@@ -385,7 +385,7 @@ std::optional<std::string> EpLayeringMatcher::Match(const ExecutionProviders& pr
   return std::nullopt;
 }
 
-LayeringIndex LayeringIndex::Create(const Graph& graph,
+LayeringIndex LayeringIndex::Create(Graph& graph,
                                     EpNameToLayeringIndices ep_map,
                                     LayeringIndexToEpName rule_map,
                                     const LayeringRuleMatcher& matcher) {
@@ -399,12 +399,12 @@ LayeringIndex LayeringIndex::Create(const Graph& graph,
 }
 
 // Process to to bottom-up assign layering indices to nodes
-void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& matcher,
+void LayeringIndex::ProcessGraph(Graph& graph, const LayeringRuleMatcher& matcher,
                                  std::optional<size_t> parent_layer_id) {
   // 3. Create entry for this graph instance
   GraphLayeringIndex& current_graph_index = graph_index_[&graph];
 
-  for (const auto& node : graph.Nodes()) {
+  for (auto& node : graph.Nodes()) {
     std::optional<size_t> matched_rule_idx = std::nullopt;
 
     // 4. For every node query its annotation
@@ -412,6 +412,8 @@ void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& 
     if (!annotation.empty()) {
       // If it has an annotation try to match it
       matched_rule_idx = matcher.Match(annotation);
+      // Save memory and clear the annotation since it's no longer needed
+      node.ClearLayeringAnnotation();
     }
 
     // 5. If node has no annotation, inherit from subgraph parent node
@@ -437,7 +439,7 @@ void LayeringIndex::ProcessGraph(const Graph& graph, const LayeringRuleMatcher& 
     // Recurse for subgraphs
     if (node.ContainsSubgraph()) {
       const std::optional<size_t> subgraph_parent_assignment = matched_rule_idx;
-      for (const auto& [attr_name, subgraph] : node.GetAttributeNameToSubgraphMap()) {
+      for (auto& [attr_name, subgraph] : node.GetMutableMapOfAttributeNameToSubgraph()) {
         ProcessGraph(*subgraph, matcher, subgraph_parent_assignment);
       }
     }

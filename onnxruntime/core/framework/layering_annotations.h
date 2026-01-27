@@ -131,7 +131,7 @@ class LayeringIndex {
   /// <param name="ep_map">Pre-populated mapping of EP names to their applicable rule indices.</param>
   /// <param name="rule_map">Pre-populated mapping of rule indices to EP names.</param>
   /// <param name="matcher">Matcher to resolve node annotations to rule indices.</param>
-  static LayeringIndex Create(const Graph& graph,
+  static LayeringIndex Create(Graph& graph,
                               EpNameToLayeringIndices ep_map,
                               LayeringIndexToEpName rule_map,
                               const LayeringRuleMatcher& matcher);
@@ -155,7 +155,7 @@ class LayeringIndex {
       return {};
     }
 
-    // Nodes in subgraph that are not annotated has already inherited their
+    // Nodes in subgraph that were not annotated has already inherited their
     // annotation if any from the parent node of the subgraph
     const auto& graph_layering_index = hit->second;
     auto layer_hit = graph_layering_index.node_to_layering_index_.find(node_id);
@@ -223,7 +223,7 @@ class LayeringIndex {
   // Graph and sub-graphs mapping to their indices
   InlinedHashMap<const Graph*, GraphLayeringIndex> graph_index_;
 
-  void ProcessGraph(const Graph& graph, const LayeringRuleMatcher& matcher, std::optional<size_t> parent_layer_id);
+  void ProcessGraph(Graph& graph, const LayeringRuleMatcher& matcher, std::optional<size_t> parent_layer_id);
 };
 
 }  // namespace onnxruntime

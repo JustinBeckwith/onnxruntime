@@ -4,11 +4,12 @@
 #include "core/framework/ortmemoryinfo.h"
 #include "core/framework/layering_annotations.h"
 #include "core/session/abi_devices.h"
-#include "core/framework/execution_provider.h"  // For kCpuExecutionProvider, kCudaExecutionProvider, etc.
+#include "core/framework/execution_provider.h"
 #include "core/framework/ortdevice.h"
 #include "core/graph/constants.h"
+#include "core/graph/model.h"  // For Model, Graph
 #include "gtest/gtest.h"
-#include "core/framework/execution_providers.h"  // For ExecutionProviders
+#include "core/framework/execution_providers.h"
 
 namespace onnxruntime {
 namespace test {
@@ -576,5 +577,283 @@ TEST(EpLayeringMatcherTest, MatchExecutionProviders_Accelerator) {
   EXPECT_EQ(*result, "MyAccel");
 }
 
+TEST(LayeringIndexTest, AssignNodesBasedOnAnnotations) {
+  // 1. Setup Graph
+  std::unordered_map<std::string, int> domain_to_version;
+  domain_to_version[kOnnxDomain] = 12;
+  Model model("test_model", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(),
+              domain_to_version, std::vector<ONNX_NAMESPACE::FunctionProto>(),
+              DefaultLoggingManager().DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  // Create nodes
+  // Node 0: "AnnotatedNode" -> Annotated with "RuleA"
+  ONNX_NAMESPACE::TypeProto type_proto;
+  type_proto.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  NodeArg* input_arg = &graph.GetOrCreateNodeArg("input", &type_proto);
+  NodeArg* output_arg0 = &graph.GetOrCreateNodeArg("output0", &type_proto);
+  Node& node0 = graph.AddNode("node0", "Abs", "Node 0", {input_arg}, {output_arg0});
+  node0.SetLayeringAnnotation("RuleA");
+
+  // Node 1: "UnannotatedNode" -> No annotation
+  NodeArg* output_arg1 = &graph.GetOrCreateNodeArg("output1", &type_proto);
+  Node& node1 = graph.AddNode("node1", "Abs", "Node 1", {output_arg0}, {output_arg1});
+  // No annotation
+
+  // Node 2: "AnnotatedNode2" -> Annotated with "RuleB"
+  NodeArg* output_arg2 = &graph.GetOrCreateNodeArg("output2", &type_proto);
+  Node& node2 = graph.AddNode("node2", "Abs", "Node 2", {output_arg1}, {output_arg2});
+  node2.SetLayeringAnnotation("RuleB");
+
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  // 2. Setup Rules and Matcher
+  LayeringRules rules;
+  rules.rules.push_back({"DeviceA", "RuleA", false});  // Index 0
+  rules.rules.push_back({"DeviceB", "RuleB", false});  // Index 1
+  LayeringRuleMatcher matcher(rules);
+
+  // 3. Setup Pre-computed Mappings (simulating Partitioning Manager)
+  LayeringIndex::EpNameToLayeringIndices ep_map;
+  ep_map["DeviceA"].insert(0);
+  ep_map["DeviceB"].insert(1);
+
+  LayeringIndex::LayeringIndexToEpName rule_map;
+  rule_map[0] = "DeviceA";
+  rule_map[1] = "DeviceB";
+
+  // 4. Create LayeringIndex
+  auto index = LayeringIndex::Create(graph, std::move(ep_map), std::move(rule_map), matcher);
+
+  // 5. Verify Assignments
+  // Node 0: Annotated "RuleA" -> Index 0 -> DeviceA
+  auto assign0 = index.GetNodeAssignment(graph, node0.Index());
+  ASSERT_TRUE(assign0.has_value());
+  EXPECT_EQ(*assign0, 0u);
+
+  // Node 1: Unannotated -> Should generally map to nothing (unless defaulting logic exists,
+  // but current impl leaves unannotated in main graph as unassigned)
+  auto assign1 = index.GetNodeAssignment(graph, node1.Index());
+  EXPECT_FALSE(assign1.has_value());
+
+  // Node 2: Annotated "RuleB" -> Index 1 -> DeviceB
+  auto assign2 = index.GetNodeAssignment(graph, node2.Index());
+  ASSERT_TRUE(assign2.has_value());
+  EXPECT_EQ(*assign2, 1u);
+}
+
+TEST(LayeringIndexTest, AssignNodeWithInvalidEpMapping) {
+  // Scenario: Node annotated with a rule that maps to an EP that is NOT present/valid
+
+  // 1. Setup Graph with one node annotated "RuleX"
+  std::unordered_map<std::string, int> domain_to_version;
+  domain_to_version[kOnnxDomain] = 12;
+  Model model("test_model", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(),
+              domain_to_version, std::vector<ONNX_NAMESPACE::FunctionProto>(),
+              DefaultLoggingManager().DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  ONNX_NAMESPACE::TypeProto type_proto;
+  type_proto.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  NodeArg* input_arg = &graph.GetOrCreateNodeArg("input", &type_proto);
+  NodeArg* output_arg = &graph.GetOrCreateNodeArg("output", &type_proto);
+
+  Node& node = graph.AddNode("node", "Abs", "Node", {input_arg}, {output_arg});
+  node.SetLayeringAnnotation("RuleX");
+
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  // 2. Setup Rules: RuleX exists at index 0, maps to "PhantomDevice"
+  LayeringRules rules;
+  rules.rules.push_back({"PhantomDevice", "RuleX", false});  // Index 0
+  LayeringRuleMatcher matcher(rules);
+
+  // 3. Setup Mappings: But "PhantomDevice" is NOT in the mappings (simulating EP unavailable)
+  LayeringIndex::EpNameToLayeringIndices ep_map;
+  // ep_map["PhantomDevice"] is empty/missing
+
+  LayeringIndex::LayeringIndexToEpName rule_map;
+  // rule_map[0] is missing
+
+  // 4. Create Index
+  auto index = LayeringIndex::Create(graph, std::move(ep_map), std::move(rule_map), matcher);
+
+  // 5. Verify: Node should NOT be assigned because the mapped EP is missing
+  auto assign = index.GetNodeAssignment(graph, node.Index());
+  EXPECT_FALSE(assign.has_value());
+}
+
+TEST(LayeringIndexTest, SubgraphInheritance) {
+  // Scenario: Annotated Node containing a subgraph.
+  // Nodes inside subgraph (unannotated) should inherit parent's assignment.
+
+  // 1. Setup Parent Graph
+  std::unordered_map<std::string, int> domain_to_version;
+  domain_to_version[kOnnxDomain] = 12;
+  Model model("test_model", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(),
+              domain_to_version, std::vector<ONNX_NAMESPACE::FunctionProto>(),
+              DefaultLoggingManager().DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  ONNX_NAMESPACE::TypeProto type_proto;
+  type_proto.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_BOOL);
+  NodeArg* cond_arg = &graph.GetOrCreateNodeArg("cond", &type_proto);
+  NodeArg* output_arg = &graph.GetOrCreateNodeArg("output", &type_proto);
+
+  // Create "If" node
+  Node& if_node = graph.AddNode("if_node", "If", "If Node", {cond_arg}, {output_arg});
+  if_node.SetLayeringAnnotation("RuleA");  // Annotate Parent
+
+  auto build_subgraph = [](ONNX_NAMESPACE::GraphProto& proto, const std::string& graph_name,
+                           const std::string& node_name, const std::string& input_name, const std::string& output_name) {
+    proto.set_name(graph_name);
+    // Inputs: Implicit from outer scope for 'cond'
+
+    auto* node = proto.add_node();
+    node->set_name(node_name);
+    node->set_op_type("Identity");
+    node->add_input(input_name);
+    node->add_output(output_name);
+
+    auto* out_vi = proto.add_output();
+    out_vi->set_name(output_name);
+    out_vi->mutable_type()->mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_BOOL);
+  };
+
+  // Create Subgraph (then_branch)
+  ONNX_NAMESPACE::GraphProto then_graph_proto;
+  build_subgraph(then_graph_proto, "then_graph", "sub_node", "cond", "sub_out");
+  if_node.AddAttribute("then_branch", then_graph_proto);
+
+  // Create 'else_branch'
+  ONNX_NAMESPACE::GraphProto else_graph_proto;
+  build_subgraph(else_graph_proto, "else_graph", "else_sub_node", "cond", "else_sub_out");
+  if_node.AddAttribute("else_branch", else_graph_proto);
+
+  // First Resolve to create subgraph instances
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  // Get subgraph instances (checked to ensure they exist)
+  Graph* then_graph = if_node.GetMutableGraphAttribute("then_branch");
+  ASSERT_NE(then_graph, nullptr);
+  Graph* else_graph = if_node.GetMutableGraphAttribute("else_branch");
+  ASSERT_NE(else_graph, nullptr);
+
+  // 2. Setup Rules
+  LayeringRules rules;
+  rules.rules.push_back({"DeviceA", "RuleA", false});  // Index 0
+  LayeringRuleMatcher matcher(rules);
+
+  LayeringIndex::EpNameToLayeringIndices ep_map;
+  ep_map["DeviceA"].insert(0);
+  LayeringIndex::LayeringIndexToEpName rule_map;
+  rule_map[0] = "DeviceA";
+
+  // 3. Create Index
+  auto index = LayeringIndex::Create(graph, std::move(ep_map), std::move(rule_map), matcher);
+
+  // 4. Verify Parent Assignment
+  auto assign_parent = index.GetNodeAssignment(graph, if_node.Index());
+  ASSERT_TRUE(assign_parent.has_value());
+  EXPECT_EQ(*assign_parent, 0u);
+
+  // 5. Verify Subgraph Node Assignment (Inheritance)
+  bool validated_then = false;
+  for (const auto& node : then_graph->Nodes()) {
+    if (node.OpType() == "Identity") {
+      auto assign_sub = index.GetNodeAssignment(*then_graph, node.Index());
+      ASSERT_TRUE(assign_sub.has_value()) << "Subgraph node should inherit parent annotation";
+      EXPECT_EQ(*assign_sub, 0u);
+      validated_then = true;
+    }
+  }
+  ASSERT_TRUE(validated_then);
+}
+
+TEST(LayeringIndexTest, SubgraphOverride) {
+  // Scenario: Annotated Node containing a subgraph.
+  // Node inside subgraph HAS annotation -> Should override inheritance.
+
+  std::unordered_map<std::string, int> domain_to_version;
+  domain_to_version[kOnnxDomain] = 12;
+  Model model("test_model", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(),
+              domain_to_version, std::vector<ONNX_NAMESPACE::FunctionProto>(),
+              DefaultLoggingManager().DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  ONNX_NAMESPACE::TypeProto type_proto;
+  type_proto.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_BOOL);
+  NodeArg* cond_arg = &graph.GetOrCreateNodeArg("cond", &type_proto);
+  NodeArg* output_arg = &graph.GetOrCreateNodeArg("output", &type_proto);
+
+  Node& if_node = graph.AddNode("if_node", "If", "If Node", {cond_arg}, {output_arg});
+  if_node.SetLayeringAnnotation("RuleA");  // Annotate Parent = Rule A (Index 0)
+
+  auto build_subgraph = [](ONNX_NAMESPACE::GraphProto& proto, const std::string& graph_name,
+                           const std::string& node_name, const std::string& input_name, const std::string& output_name) {
+    proto.set_name(graph_name);
+
+    auto* node = proto.add_node();
+    node->set_name(node_name);
+    node->set_op_type("Identity");
+    node->add_input(input_name);
+    node->add_output(output_name);
+
+    auto* out_vi = proto.add_output();
+    out_vi->set_name(output_name);
+    out_vi->mutable_type()->mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_BOOL);
+  };
+
+  ONNX_NAMESPACE::GraphProto then_graph_proto;
+  build_subgraph(then_graph_proto, "then_graph", "sub_node", "cond", "sub_out");
+  if_node.AddAttribute("then_branch", then_graph_proto);
+
+  ONNX_NAMESPACE::GraphProto else_graph_proto;
+  build_subgraph(else_graph_proto, "else_graph", "else_sub_node", "cond", "else_sub_out");
+  if_node.AddAttribute("else_branch", else_graph_proto);
+
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  Graph* then_graph = if_node.GetMutableGraphAttribute("then_branch");
+  ASSERT_NE(then_graph, nullptr);
+
+  // Find sub_node to set annotation
+  Node* sub_node = nullptr;
+  for (auto& node : then_graph->Nodes()) {
+    if (node.Name() == "sub_node") {
+      sub_node = &node;
+      break;
+    }
+  }
+  ASSERT_NE(sub_node, nullptr);
+
+  // OVERRIDE: Annotate sub_node with Rule B
+  sub_node->SetLayeringAnnotation("RuleB");
+
+  // Rules: RuleA(0)->DeviceA, RuleB(1)->DeviceB
+  LayeringRules rules;
+  rules.rules.push_back({"DeviceA", "RuleA", false});
+  rules.rules.push_back({"DeviceB", "RuleB", false});
+  LayeringRuleMatcher matcher(rules);
+
+  LayeringIndex::EpNameToLayeringIndices ep_map;
+  ep_map["DeviceA"].insert(0);
+  ep_map["DeviceB"].insert(1);
+  LayeringIndex::LayeringIndexToEpName rule_map;
+  rule_map[0] = "DeviceA";
+  rule_map[1] = "DeviceB";
+
+  auto index = LayeringIndex::Create(graph, std::move(ep_map), std::move(rule_map), matcher);
+
+  // Verify Parent = 0
+  auto assign_parent = index.GetNodeAssignment(graph, if_node.Index());
+  ASSERT_TRUE(assign_parent.has_value());
+  EXPECT_EQ(*assign_parent, 0u);
+
+  // Verify Sub = 1 (Override)
+  auto assign_sub = index.GetNodeAssignment(*then_graph, sub_node->Index());
+  ASSERT_TRUE(assign_sub.has_value());
+  EXPECT_EQ(*assign_sub, 1u);
+}
 }  // namespace test
 }  // namespace onnxruntime

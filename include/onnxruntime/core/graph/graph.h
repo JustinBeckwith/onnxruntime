@@ -179,7 +179,10 @@ class Node {
 
   const std::string& GetLayeringAnnotation() const { return layering_annotation_; }
 
-  void ClearLayeringAnnotation() { layering_annotation_.clear(); }
+  void ClearLayeringAnnotation() {
+    std::string t;
+    layering_annotation_.swap(t);
+  }
 
   /** Gets the Node's OpSchema.
   @remarks The graph containing this node must be resolved, otherwise nullptr will be returned. */
