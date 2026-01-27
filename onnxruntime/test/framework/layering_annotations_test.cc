@@ -855,5 +855,103 @@ TEST(LayeringIndexTest, SubgraphOverride) {
   ASSERT_TRUE(assign_sub.has_value());
   EXPECT_EQ(*assign_sub, 1u);
 }
+
+TEST(LayeringRulesTest, LayeringRulesParsing) {
+  // Test empty string
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("", rules));
+    EXPECT_TRUE(rules.rules.empty());
+  }
+
+  // Test simple valid string
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("EP1(Annotation1)", rules));
+    ASSERT_EQ(rules.rules.size(), 1u);
+    EXPECT_EQ(rules.rules[0].device, "EP1");
+    EXPECT_EQ(rules.rules[0].annotation, "Annotation1");
+    EXPECT_FALSE(rules.rules[0].prefix_match);
+  }
+
+  // Test multiple annotations for one device
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("EP1(Annotation1, Annotation2)", rules));
+    ASSERT_EQ(rules.rules.size(), 2u);
+    EXPECT_EQ(rules.rules[0].device, "EP1");
+    EXPECT_EQ(rules.rules[0].annotation, "Annotation1");
+    EXPECT_FALSE(rules.rules[0].prefix_match);
+    EXPECT_EQ(rules.rules[1].device, "EP1");
+    EXPECT_EQ(rules.rules[1].annotation, "Annotation2");
+    EXPECT_FALSE(rules.rules[1].prefix_match);
+  }
+
+  // Test multiple devices
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("EP1(Annotation1); EP2(Annotation2)", rules));
+    ASSERT_EQ(rules.rules.size(), 2u);
+    EXPECT_EQ(rules.rules[0].device, "EP1");
+    EXPECT_EQ(rules.rules[0].annotation, "Annotation1");
+    EXPECT_FALSE(rules.rules[0].prefix_match);
+    EXPECT_EQ(rules.rules[1].device, "EP2");
+    EXPECT_EQ(rules.rules[1].annotation, "Annotation2");
+    EXPECT_FALSE(rules.rules[1].prefix_match);
+  }
+
+  // Test prefix match
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("EP1(=Annotation1)", rules));
+    ASSERT_EQ(rules.rules.size(), 1u);
+    EXPECT_EQ(rules.rules[0].device, "EP1");
+    EXPECT_EQ(rules.rules[0].annotation, "Annotation1");
+    EXPECT_TRUE(rules.rules[0].prefix_match);
+  }
+
+  // Test trimming whitespace
+  {
+    LayeringRules rules;
+    ASSERT_STATUS_OK(LayeringRules::FromConfigString("  EP1  (  Annotation1  ,  =Annotation2  )  ;  EP2  (  Annotation3  )  ", rules));
+    ASSERT_EQ(rules.rules.size(), 3u);
+    EXPECT_EQ(rules.rules[0].device, "EP1");
+    EXPECT_EQ(rules.rules[0].annotation, "Annotation1");
+    EXPECT_FALSE(rules.rules[0].prefix_match);
+    EXPECT_EQ(rules.rules[1].device, "EP1");
+    EXPECT_EQ(rules.rules[1].annotation, "Annotation2");
+    EXPECT_TRUE(rules.rules[1].prefix_match);
+    EXPECT_EQ(rules.rules[2].device, "EP2");
+    EXPECT_EQ(rules.rules[2].annotation, "Annotation3");
+    EXPECT_FALSE(rules.rules[2].prefix_match);
+  }
+}
+
+TEST(LayeringRulesTest, FromConfigString_InvalidFormat) {
+  LayeringRules rules;
+
+  // Error: Missing parentheses structure entirely
+  EXPECT_FALSE(LayeringRules::FromConfigString("Device1Annotation1", rules).IsOK());
+
+  // Error: Missing closing parenthesis
+  EXPECT_FALSE(LayeringRules::FromConfigString("Device1(Annotation1", rules).IsOK());
+
+  // Error: Missing opening parenthesis (or only closing present)
+  EXPECT_FALSE(LayeringRules::FromConfigString("Device1Annotation1)", rules).IsOK());
+
+  // Error: Parentheses reversed
+  EXPECT_FALSE(LayeringRules::FromConfigString("Device1)Annotation1(", rules).IsOK());
+
+  // Error: Empty device name (starts with parenthesis)
+  EXPECT_FALSE(LayeringRules::FromConfigString("(Annotation1)", rules).IsOK());
+}
+
+TEST(LayeringRulesTest, FromConfigString_IgnoresEmptyEntries) {
+  LayeringRules rules;
+  // "; ;" should result in 0 rules but Status::OK
+  ASSERT_STATUS_OK(LayeringRules::FromConfigString(";   ;", rules));
+  EXPECT_TRUE(rules.rules.empty());
+}
+
 }  // namespace test
 }  // namespace onnxruntime

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/common/inlined_containers.h"
+#include "core/common/status.h"
 #include "core/graph/basic_types.h"
 #include "gsl/gsl"
 #include <string>
@@ -35,9 +36,10 @@ struct LayeringRules {
   /// <summary>
   /// Parses the layering rules from the given configuration string.
   /// </summary>
-  /// <param name="config_value"></param>
-  /// <returns></returns>
-  static LayeringRules FromConfigString(const std::string& config_value);
+  /// <param name="config_value">The configuration string to parse.</param>
+  /// <param name="rules">Output parameter where the parsed rules will be stored.</param>
+  /// <returns>Status indicating success or failure (e.g. due to format errors).</returns>
+  static common::Status FromConfigString(const std::string& config_value, LayeringRules& rules);
 };
 
 /// <summary>

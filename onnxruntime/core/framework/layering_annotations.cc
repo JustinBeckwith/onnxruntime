@@ -14,10 +14,10 @@
 
 namespace onnxruntime {
 
-LayeringRules LayeringRules::FromConfigString(const std::string& config_value) {
-  LayeringRules rules;
+common::Status LayeringRules::FromConfigString(const std::string& config_value, LayeringRules& rules) {
+  rules.rules.clear();
   if (config_value.empty()) {
-    return rules;
+    return common::Status::OK();
   }
 
   auto entries = utils::SplitString(config_value, ";");
@@ -30,15 +30,21 @@ LayeringRules LayeringRules::FromConfigString(const std::string& config_value) {
     const size_t open_paren = entry.find('(');
     const size_t close_paren = entry.find(')');
 
-    if (open_paren == std::string::npos || close_paren == std::string::npos || close_paren < open_paren) {
-      continue;
+    if (open_paren == std::string::npos) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Invalid layering config: Missing '(' in entry: ", entry);
+    }
+    if (close_paren == std::string::npos) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Invalid layering config: Missing ')' in entry: ", entry);
+    }
+    if (close_paren < open_paren) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Invalid layering config: ')' comes before '(' in entry: ", entry);
     }
 
     std::string device = entry.substr(0, open_paren);
     device = utils::TrimString(device);
 
     if (device.empty()) {
-      continue;
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Invalid layering config: Empty device name in entry: ", entry);
     }
 
     std::string annotations_list = entry.substr(open_paren + 1, close_paren - open_paren - 1);
@@ -57,14 +63,14 @@ LayeringRules LayeringRules::FromConfigString(const std::string& config_value) {
       }
 
       if (ann.empty()) {
-        continue;
+        return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Invalid layering config: Empty annotation in entry: ", entry);
       }
 
       rules.rules.push_back({device, std::move(ann), prefix_match});
     }
   }
 
-  return rules;
+  return common::Status::OK();
 }
 
 LayeringRuleMatcher::LayeringRuleMatcher(const LayeringRules& rules) {
